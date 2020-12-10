@@ -1,3 +1,11 @@
+# CSE-538 Course Project
+The base code is on [github](https://github.com/jind11/TitleStylist).
+We changed the following files:
+- README (the current file)
+- data/humor/raw/humor.raw (We replaced the base humor corpus with 'Onion or Not' corpus.)
+- mass/translation.py (adding task 'translation_mix_kl' for KL divergence)
+- train_mix_CNN_NYT_X.sh (changing trianing run options of KL, reordering, and style-dependent decoder layers)
+
 # TitleStylist
 Source code for our "TitleStylist" paper at ACL 2020: [Jin, Di, Zhijing Jin, Joey Tianyi Zhou, Lisa Orii, and Peter Szolovits. "Hooks in the Headline: Learning to Generate Headlines with Controlled Styles." ACL (2020).](https://arxiv.org/abs/2004.01980). If you use the code, please cite the paper:
 
@@ -38,7 +46,10 @@ python setup.py install
 ```
 
 ## Usage
-1. All data including the combination of CNN and NYT article and headline pairs, and the three style-specific corpora (humor, romance, and clickbait) mentioned in the paper have been placed in the folder "data".
+1. All data including the combination of CNN and NYT article and headline pairs, and the three style-specific corpora (humor, romance, and clickbait) mentioned in the paper have been placed in the folder "data". To make the raw data divided to train, valid, and test groups, run the following command:
+```
+./data_process.sh
+```
 
 2. Please download the pretrained model parameters of MASS from [this link](https://modelrelease.blob.core.windows.net/mass/mass-base-uncased.tar.gz), unzip it, and put the unzipped files into the folder "pretrained_model/MASS".
 

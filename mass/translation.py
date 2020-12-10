@@ -800,3 +800,81 @@ class SummDAETranslationTask(FairseqTask):
             match_source_len=getattr(args, 'match_source_len', False),
             no_repeat_ngram_size=getattr(args, 'no_repeat_ngram_size', 0),
         )
+
+@register_task('translation_mix_kl')
+class SummDAETranslationKLTask(SummDAETranslationTask):
+    def __init__(self, args, dicts, training):
+        super().__init__(args, dicts, training)
+        self.kl_weight = args.kl_weight
+    
+    @staticmethod
+    def add_args(parser):
+        SummDAETranslationTask.add_args(parser)
+        parser.add_argument('--kl_weight', default=0.05, help='the weight given the the KL divergence loss portion of the loss')
+    
+    def train_step(self, sample, model, criterion, optimizer, ignore_grad=False):
+        model.train()
+        agg_loss, agg_sample_size, agg_logging_output = 0., 0., {}
+
+        def forward_backward(model, samples, logging_output_key, weight):
+            nonlocal agg_loss, agg_sample_size, agg_logging_output
+            if samples is None or len(samples) == 0:
+                return
+            loss, sample_size, logging_output = criterion(model, samples)
+            # loss, sample_size, logging_output = criterion(model, samples)
+            if ignore_grad:
+                loss *= 0
+            else:
+                loss *= weight
+            optimizer.backward(loss)
+            agg_loss += loss.detach().item()
+            # TODO make summing of the sample sizes configurable
+            agg_sample_size += sample_size
+            agg_logging_output[logging_output_key] = logging_output
+
+        if self.lambda_parallel > 0.0:
+            forward_backward(model, sample[self.summ_pair], self.summ_pair, self.lambda_parallel)
+
+        if self.lambda_denoising > 0.0:
+            for lang_pair in self.dae_pairs:
+                # _, tgt = lang_pair.split('-')
+                sample_key = _get_denoising_dataset_key(lang_pair)
+                forward_backward(model, sample[sample_key], sample_key, self.lambda_denoising)
+
+        # Use KL divergence to model the difference the distance of outputs from src decoder in src-tgt vs style decoder in src-style
+        def forward_backward_KL(model, samples, style_key, weight):
+            nonlocal agg_loss, agg_sample_size, agg_logging_output
+            if samples is None or len(samples) == 0:
+                return
+            true_pair = samples["net_input"]['lang_pair']
+            samples["net_input"]['lang_pair'] = style_key
+            style_output = model(**samples["net_input"])
+            lprobs = model.get_normalized_probs(style_output, log_probs=False)
+            style_pred = lprobs.view(-1, lprobs.size(-1))
+            samples["net_input"]['lang_pair'] = true_pair
+            src_output = model(**samples["net_input"])
+            lprobs = model.get_normalized_probs(src_output, log_probs=True)
+            src_pred = lprobs.view(-1, lprobs.size(-1))
+
+            loss = torch.nn.functional.kl_div(src_pred, style_pred, reduction='batchmean')
+
+            if ignore_grad:
+                loss *= 0
+            else:
+                loss *= weight
+
+            sample_size = samples["ntokens"]
+
+            optimizer.backward(loss)
+            agg_loss += loss.detach().item()
+            agg_sample_size += sample_size
+            agg_logging_output['kl_divergence'] = loss
+
+        if self.kl_weight > 0:
+            for style in self.dae_styles:
+                style_key = 'src-' + style
+                forward_backward_KL(model, sample[self.summ_pair], style_key, self.kl_weight)
+
+
+
+        return agg_loss, agg_sample_size, agg_logging_output
